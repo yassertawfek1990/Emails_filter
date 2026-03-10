@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MailFilter — Email Deduplicator</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,600;1,9..40,300&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #0d0d0f;
+    --surface: #16161a;
+    --surface2: #1e1e24;
+    --surface3: #26262e;
+    --border: #2e2e38;
+    --accent: #00e5a0;
+    --accent2: #ff6b6b;
+    --accent3: #6b8cff;
+    --text: #f0f0f4;
+    --text2: #9090a0;
+    --text3: #5a5a6a;
+    --radius: 10px;
+    --tab-h: 44px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 15px; }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .logo {
+    display: flex; align-items: center; gap: 10px;
+    font-family: 'DM Mono', monospace;
+    font-size: 1.1rem; font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+  .logo-icon {
+    width: 30px; height: 30px;
+    background: var(--accent);
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #000;
+  }
+  .logo span { color: var(--text2); }
+  .badge {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    padding: 4px 10px;
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    color: var(--text2);
+  }
+
+  /* ── MAIN LAYOUT ── */
+  .main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 0;
+    min-height: 0;
+  }
+
+  /* ── LEFT PANEL ── */
+  .panel-left {
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .panel-section {
+    padding: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-section:last-child { border-bottom: none; flex: 1; }
+  .section-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin-bottom: 16px;
+  }
+
+  /* ── UPLOAD ZONES ── */
+  .upload-zone {
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--surface2);
+    position: relative;
+    overflow: hidden;
+  }
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(0,229,160,0.04);
+  }
+  .upload-zone.has-file {
+    border-style: solid;
+    border-color: var(--accent);
+    background: rgba(0,229,160,0.06);
+  }
+  .upload-zone.exclude-zone:hover,
+  .upload-zone.exclude-zone.drag-over {
+    border-color: var(--accent2);
+    background: rgba(255,107,107,0.04);
+  }
+  .upload-zone.exclude-zone.has-file {
+    border-color: var(--accent2);
+    background: rgba(255,107,107,0.06);
+  }
+  .upload-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .upload-icon { font-size: 1.6rem; margin-bottom: 8px; display: block; }
+  .upload-title { font-size: 0.88rem; font-weight: 600; margin-bottom: 4px; }
+  .upload-sub { font-size: 0.78rem; color: var(--text2); line-height: 1.4; }
+  .file-info {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: var(--surface3);
+    border-radius: 6px;
+    font-size: 0.78rem;
+  }
+  .file-info-name { flex: 1; font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-info-count { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--accent); white-space: nowrap; }
+  .file-info-count.red { color: var(--accent2); }
+  .clear-btn {
+    background: none; border: none; color: var(--text3); cursor: pointer;
+    font-size: 1rem; line-height: 1; padding: 2px; transition: color 0.2s;
+    flex-shrink: 0;
+  }
+  .clear-btn:hover { color: var(--accent2); }
+
+  /* ── RUN BUTTON ── */
+  .run-section { padding: 20px 24px; border-bottom: 1px solid var(--border); }
+  .btn-run {
+    width: 100%;
+    padding: 13px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: var(--radius);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn-run:hover { background: #00ffb3; transform: translateY(-1px); }
+  .btn-run:active { transform: translateY(0); }
+  .btn-run:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+  /* ── STATS ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .stat-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+  }
+  .stat-card.accent { border-color: rgba(0,229,160,0.3); background: rgba(0,229,160,0.04); }
+  .stat-value { font-family: 'DM Mono', monospace; font-size: 1.4rem; font-weight: 500; }
+  .stat-value.green { color: var(--accent); }
+  .stat-value.red { color: var(--accent2); }
+  .stat-value.blue { color: var(--accent3); }
+  .stat-label { font-size: 0.72rem; color: var(--text2); margin-top: 3px; }
+
+  /* ── DOWNLOAD SECTION ── */
+  .download-section { padding: 20px 24px; }
+  .download-label { font-family: 'DM Mono', monospace; font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text3); margin-bottom: 12px; }
+  .download-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-dl {
+    flex: 1; min-width: 70px;
+    padding: 9px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface2);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+  }
+  .btn-dl:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: rgba(0,229,160,0.05); }
+  .btn-dl:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* ── RIGHT PANEL (TABS) ── */
+  .panel-right {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── TAB BAR ── */
+  .tab-bar {
+    display: flex;
+    align-items: center;
+    height: var(--tab-h);
+    border-bottom: 1px solid var(--border);
+    padding: 0 8px;
+    gap: 4px;
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .tab {
+    display: flex; align-items: center; gap: 7px;
+    height: 34px;
+    padding: 0 14px;
+    border-radius: 7px;
+    font-size: 0.83rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.18s;
+    border: 1.5px solid transparent;
+    color: var(--text2);
+    white-space: nowrap;
+    position: relative;
+    user-select: none;
+  }
+  .tab:hover:not(.disabled) { color: var(--text); background: var(--surface3); }
+  .tab.active {
+    color: var(--text);
+    background: var(--surface2);
+    border-color: var(--border);
+  }
+  .tab.disabled { opacity: 0.3; cursor: not-allowed; }
+  .tab-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-main { background: var(--accent3); }
+  .dot-exclude { background: var(--accent2); }
+  .dot-result { background: var(--accent); }
+  .tab-count {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    padding: 1px 6px;
+    background: var(--surface3);
+    border-radius: 100px;
+    color: var(--text2);
+  }
+  .tab-active-indicator {
+    margin-left: auto;
+    font-size: 0.68rem;
+    font-family: 'DM Mono', monospace;
+    color: var(--text3);
+    padding-right: 8px;
+  }
+  .active-slots { display: flex; gap: 4px; align-items: center; }
+  .slot {
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    border: 1px solid var(--border);
+    color: var(--text3);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .slot.filled { color: var(--text); border-color: var(--accent); background: rgba(0,229,160,0.08); }
+  .slot-label { color: var(--text3); font-size: 0.65rem; margin-right: 4px; }
+
+  /* ── TAB CONTENT ── */
+  .tab-panels {
+    flex: 1; overflow: hidden; position: relative;
+  }
+  .tab-panel {
+    position: absolute; inset: 0;
+    display: none;
+    overflow-y: auto;
+    padding: 0;
+  }
+  .tab-panel.visible { display: flex; flex-direction: column; }
+
+  /* ── COMPARE VIEW ── */
+  .compare-wrapper {
+    flex: 1; display: flex; overflow: hidden;
+  }
+  .compare-pane {
+    flex: 1;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+  }
+  .compare-pane:last-child { border-right: none; }
+  .pane-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .pane-title { font-size: 0.83rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .pane-count { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--text2); }
+  .email-list {
+    flex: 1; overflow-y: auto; padding: 12px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .email-row {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.78rem;
+    padding: 7px 12px;
+    border-radius: 6px;
+    color: var(--text2);
+    transition: background 0.1s;
+    display: flex; align-items: center; gap: 8px;
+    line-height: 1.3;
+  }
+  .email-row:hover { background: var(--surface3); color: var(--text); }
+  .email-row-num { color: var(--text3); min-width: 32px; font-size: 0.68rem; text-align: right; flex-shrink: 0; }
+  .email-row.excluded { color: var(--text3); text-decoration: line-through; }
+  .email-row.result-row { color: var(--accent); }
+  .email-row.dup-row { color: var(--text3); text-decoration: line-through; }
+
+  /* ── EMPTY / PLACEHOLDER ── */
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; color: var(--text3); text-align: center; padding: 40px;
+  }
+  .empty-icon { font-size: 2.5rem; opacity: 0.4; }
+  .empty-title { font-size: 1rem; font-weight: 600; color: var(--text2); }
+  .empty-sub { font-size: 0.83rem; line-height: 1.5; max-width: 300px; }
+
+  /* ── SEARCH BAR ── */
+  .search-bar {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .search-input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 14px 8px 36px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.2s;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%235a5a6a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: 12px center;
+  }
+  .search-input:focus { border-color: var(--accent); }
+  .search-input::placeholder { color: var(--text3); }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+
+  /* ── TOAST ── */
+  #toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 18px;
+    font-size: 0.83rem;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    transform: translateY(20px); opacity: 0;
+    transition: all 0.25s;
+    pointer-events: none;
+    z-index: 9999;
+    max-width: 280px;
+  }
+  #toast.show { transform: translateY(0); opacity: 1; }
+  #toast.success { border-color: rgba(0,229,160,0.4); color: var(--accent); }
+  #toast.error { border-color: rgba(255,107,107,0.4); color: var(--accent2); }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 768px) {
+    .main { grid-template-columns: 1fr; }
+    .panel-left { border-right: none; border-bottom: 1px solid var(--border); }
+  }
+
+  /* ── SINGLE PANEL (no compare) ── */
+  .single-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .single-panel .email-list { flex: 1; }
+
+  /* ── ACTIVE TAB HIGHLIGHT ── */
+  .tab.active-a { border-color: var(--accent3) !important; color: var(--text) !important; }
+  .tab.active-b { border-color: var(--accent2) !important; color: var(--text) !important; }
+  .tab.active-result { border-color: var(--accent) !important; color: var(--text) !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">@</div>
+    Mail<span>Filter</span>
+  </div>
+  <div class="badge">Email Deduplicator</div>
+</header>
+
+<div class="main">
+
+  <!-- ══ LEFT PANEL ══ -->
+  <div class="panel-left">
+
+    <!-- Upload Main -->
+    <div class="panel-section">
+      <div class="section-label">① Main List</div>
+      <div class="upload-zone" id="zone-main" ondragover="handleDrag(event,'main')" ondragleave="handleDragLeave('main')" ondrop="handleDrop(event,'main')">
+        <input type="file" id="input-main" accept=".csv,.xlsx,.xls,.docx,.doc,.txt" onchange="handleFile(event,'main')">
+        <span class="upload-icon">📋</span>
+        <div class="upload-title">Main Email List</div>
+        <div class="upload-sub">CSV, Excel, Word, TXT<br>Any separator supported</div>
+      </div>
+      <div class="file-info" id="info-main" style="display:none">
+        <span class="file-info-name" id="info-main-name"></span>
+        <span class="file-info-count" id="info-main-count"></span>
+        <button class="clear-btn" onclick="clearFile('main')" title="Remove">✕</button>
+      </div>
+    </div>
+
+    <!-- Upload Exclude -->
+    <div class="panel-section">
+      <div class="section-label">② Exclude List</div>
+      <div class="upload-zone exclude-zone" id="zone-exclude" ondragover="handleDrag(event,'exclude')" ondragleave="handleDragLeave('exclude')" ondrop="handleDrop(event,'exclude')">
+        <input type="file" id="input-exclude" accept=".csv,.xlsx,.xls,.docx,.doc,.txt" onchange="handleFile(event,'exclude')">
+        <span class="upload-icon">🚫</span>
+        <div class="upload-title">Exclusion List</div>
+        <div class="upload-sub">Emails to remove from<br>the main list</div>
+      </div>
+      <div class="file-info" id="info-exclude" style="display:none">
+        <span class="file-info-name" id="info-exclude-name"></span>
+        <span class="file-info-count red" id="info-exclude-count"></span>
+        <button class="clear-btn" onclick="clearFile('exclude')" title="Remove">✕</button>
+      </div>
+    </div>
+
+    <!-- Run -->
+    <div class="run-section">
+      <button class="btn-run" id="btn-run" onclick="runFilter()" disabled>
+        <span>⚡</span> Filter Emails
+      </button>
+    </div>
+
+    <!-- Stats -->
+    <div class="panel-section">
+      <div class="section-label">Results</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value blue" id="stat-main">—</div>
+          <div class="stat-label">Main list</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value red" id="stat-exclude">—</div>
+          <div class="stat-label">Excluded</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-dups">—</div>
+          <div class="stat-label">Duplicates removed</div>
+        </div>
+        <div class="stat-card accent">
+          <div class="stat-value green" id="stat-result">—</div>
+          <div class="stat-label">Unique result</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Download -->
+    <div class="download-section">
+      <div class="download-label">Download Result As</div>
+      <div class="download-btns">
+        <button class="btn-dl" id="dl-csv" onclick="download('csv')" disabled>.csv</button>
+        <button class="btn-dl" id="dl-xlsx" onclick="download('xlsx')" disabled>.xlsx</button>
+        <button class="btn-dl" id="dl-docx" onclick="download('docx')" disabled>.docx</button>
+        <button class="btn-dl" id="dl-txt" onclick="download('txt')" disabled>.txt</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══ RIGHT PANEL ══ -->
+  <div class="panel-right">
+
+    <!-- Tab Bar -->
+    <div class="tab-bar">
+      <div class="tab disabled" id="tab-main" onclick="activateTab('main')">
+        <span class="tab-dot dot-main"></span>
+        Main List
+        <span class="tab-count" id="tc-main" style="display:none"></span>
+      </div>
+      <div class="tab disabled" id="tab-exclude" onclick="activateTab('exclude')">
+        <span class="tab-dot dot-exclude"></span>
+        Exclude List
+        <span class="tab-count" id="tc-exclude" style="display:none"></span>
+      </div>
+      <div class="tab disabled" id="tab-result" onclick="activateTab('result')">
+        <span class="tab-dot dot-result"></span>
+        Result
+        <span class="tab-count" id="tc-result" style="display:none"></span>
+      </div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px;padding-right:4px">
+        <span style="font-size:0.68rem;font-family:'DM Mono',monospace;color:var(--text3);">VIEW:</span>
+        <div class="active-slots" id="slot-container">
+          <span class="slot" id="slot-a" onclick="clickSlot('a')"><span class="slot-label">A</span>—</span>
+          <span style="color:var(--text3);font-size:0.75rem">vs</span>
+          <span class="slot" id="slot-b" onclick="clickSlot('b')"><span class="slot-label">B</span>—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panels -->
+    <div class="tab-panels">
+
+      <!-- COMPARE / SINGLE PANEL -->
+      <div class="tab-panel visible" id="panel-compare">
+        <div class="compare-wrapper" id="compare-wrapper">
+          <div class="empty-state" style="flex:1">
+            <div class="empty-icon">📂</div>
+            <div class="empty-title">No files loaded yet</div>
+            <div class="empty-sub">Upload your email lists on the left to preview and compare them here.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════
+const state = {
+  main: null,       // { name, emails: [] }
+  exclude: null,
+  result: null,     // []
+  activeSlots: { a: null, b: null },  // 'main'|'exclude'|'result'|null
+  pendingSlot: null,
+  searchMain: '', searchExclude: '', searchResult: ''
+};
+
+// ══════════════════════════════════════════
+// EMAIL EXTRACTION
+// ══════════════════════════════════════════
+const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+
+function extractEmails(text) {
+  return [...new Set((text.match(EMAIL_RE) || []).map(e => e.toLowerCase().trim()))];
+}
+
+async function readFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (ext === 'xlsx' || ext === 'xls') return readExcel(file);
+  if (ext === 'docx' || ext === 'doc') return readDocx(file);
+  return readText(file);
+}
+
+function readText(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = e => res(extractEmails(e.target.result));
+    r.onerror = () => rej(new Error('Read failed'));
+    r.readAsText(file);
+  });
+}
+
+function readExcel(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        let text = '';
+        wb.SheetNames.forEach(n => {
+          text += XLSX.utils.sheet_to_csv(wb.Sheets[n]) + '\n';
+        });
+        res(extractEmails(text));
+      } catch(err) { rej(err); }
+    };
+    r.onerror = () => rej(new Error('Read failed'));
+    r.readAsArrayBuffer(file);
+  });
+}
+
+async function readDocx(file) {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    // Word stores content in word/document.xml
+    const xmlFile = zip.file('word/document.xml');
+    if (!xmlFile) throw new Error('Not a valid .docx file');
+    const xmlText = await xmlFile.async('string');
+    // Strip all XML tags, leaving only text content
+    const plain = xmlText.replace(/<[^>]+>/g, ' ');
+    return extractEmails(plain);
+  } catch(err) {
+    throw new Error('Could not read .docx: ' + err.message);
+  }
+}
+
+// ══════════════════════════════════════════
+// FILE HANDLING
+// ══════════════════════════════════════════
+async function handleFile(evt, which) {
+  const file = evt.target.files[0];
+  if (!file) return;
+  await processFile(file, which);
+}
+
+async function processFile(file, which) {
+  try {
+    const emails = await readFile(file);
+    state[which] = { name: file.name, emails };
+    updateFileInfo(which, file.name, emails.length);
+    updateTabState(which, emails.length);
+    checkRunReady();
+    toast(`Loaded ${emails.length} unique emails from ${file.name}`, 'success');
+    autoActivateSlot(which);
+  } catch(e) {
+    toast('Error reading file: ' + e.message, 'error');
+  }
+}
+
+function updateFileInfo(which, name, count) {
+  const info = document.getElementById('info-' + which);
+  document.getElementById('info-' + which + '-name').textContent = name;
+  document.getElementById('info-' + which + '-count').textContent = count + ' emails';
+  info.style.display = 'flex';
+  document.getElementById('zone-' + which).classList.add('has-file');
+}
+
+function clearFile(which) {
+  state[which] = null;
+  document.getElementById('info-' + which).style.display = 'none';
+  document.getElementById('zone-' + which).classList.remove('has-file');
+  document.getElementById('input-' + which).value = '';
+  // Remove from slots
+  if (state.activeSlots.a === which) { state.activeSlots.a = null; }
+  if (state.activeSlots.b === which) { state.activeSlots.b = null; }
+  updateTabState(which, 0);
+  checkRunReady();
+  renderCompare();
+  updateSlotUI();
+}
+
+function checkRunReady() {
+  document.getElementById('btn-run').disabled = !(state.main && state.exclude);
+}
+
+// ══════════════════════════════════════════
+// DRAG & DROP
+// ══════════════════════════════════════════
+function handleDrag(e, which) {
+  e.preventDefault();
+  document.getElementById('zone-' + which).classList.add('drag-over');
+}
+function handleDragLeave(which) {
+  document.getElementById('zone-' + which).classList.remove('drag-over');
+}
+function handleDrop(e, which) {
+  e.preventDefault();
+  document.getElementById('zone-' + which).classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) processFile(file, which);
+}
+
+// ══════════════════════════════════════════
+// FILTER
+// ══════════════════════════════════════════
+function runFilter() {
+  if (!state.main || !state.exclude) return;
+  const mainSet = new Set(state.main.emails);
+  const excSet = new Set(state.exclude.emails);
+  const result = [...mainSet].filter(e => !excSet.has(e));
+
+  state.result = result;
+
+  const dupsInMain = state.main.emails.length - mainSet.size;
+
+  document.getElementById('stat-main').textContent = state.main.emails.length;
+  document.getElementById('stat-exclude').textContent = state.exclude.emails.length;
+  document.getElementById('stat-dups').textContent = dupsInMain + (mainSet.size - result.length);
+  document.getElementById('stat-result').textContent = result.length;
+
+  updateTabState('result', result.length);
+  ['dl-csv','dl-xlsx','dl-txt','dl-docx'].forEach(id => document.getElementById(id).disabled = false);
+
+  // Auto-show result
+  state.activeSlots.b = 'result';
+  if (!state.activeSlots.a) state.activeSlots.a = 'main';
+  updateSlotUI();
+  renderCompare();
+  toast(`Done! ${result.length} unique emails found`, 'success');
+}
+
+// ══════════════════════════════════════════
+// TAB STATE
+// ══════════════════════════════════════════
+function updateTabState(which, count) {
+  const tab = document.getElementById('tab-' + which);
+  const tc = document.getElementById('tc-' + which);
+  if (count > 0) {
+    tab.classList.remove('disabled');
+    tc.textContent = count;
+    tc.style.display = '';
+  } else {
+    tab.classList.add('disabled');
+    tc.style.display = 'none';
+  }
+}
+
+function activateTab(which) {
+  const tab = document.getElementById('tab-' + which);
+  if (tab.classList.contains('disabled')) return;
+  // Assign to a slot
+  if (!state.activeSlots.a) {
+    state.activeSlots.a = which;
+  } else if (!state.activeSlots.b) {
+    state.activeSlots.b = which;
+  } else {
+    // Replace slot b
+    state.activeSlots.b = which;
+  }
+  updateSlotUI();
+  renderCompare();
+}
+
+function autoActivateSlot(which) {
+  if (!state.activeSlots.a) { state.activeSlots.a = which; }
+  else if (!state.activeSlots.b) { state.activeSlots.b = which; }
+  updateSlotUI();
+  renderCompare();
+}
+
+function clickSlot(slot) {
+  // Toggle: click filled slot to clear it
+  if (state.activeSlots[slot]) {
+    state.activeSlots[slot] = null;
+    updateSlotUI();
+    renderCompare();
+  }
+}
+
+function updateSlotUI() {
+  const labels = { main: 'Main', exclude: 'Excl.', result: 'Result' };
+  const sa = state.activeSlots.a;
+  const sb = state.activeSlots.b;
+  const slotA = document.getElementById('slot-a');
+  const slotB = document.getElementById('slot-b');
+  slotA.innerHTML = `<span class="slot-label">A</span>${sa ? labels[sa] : '—'}`;
+  slotB.innerHTML = `<span class="slot-label">B</span>${sb ? labels[sb] : '—'}`;
+  slotA.classList.toggle('filled', !!sa);
+  slotB.classList.toggle('filled', !!sb);
+
+  // Update tab active states
+  ['main','exclude','result'].forEach(w => {
+    const tab = document.getElementById('tab-' + w);
+    tab.classList.remove('active','active-a','active-b');
+    if (sa === w) tab.classList.add('active', 'active-a');
+    if (sb === w) tab.classList.add('active', 'active-b');
+  });
+}
+
+// ══════════════════════════════════════════
+// RENDER COMPARE
+// ══════════════════════════════════════════
+function renderCompare() {
+  const wrapper = document.getElementById('compare-wrapper');
+  const sa = state.activeSlots.a;
+  const sb = state.activeSlots.b;
+
+  if (!sa && !sb) {
+    wrapper.innerHTML = `<div class="empty-state" style="flex:1">
+      <div class="empty-icon">📂</div>
+      <div class="empty-title">No files loaded yet</div>
+      <div class="empty-sub">Upload your email lists on the left to preview and compare them here.</div>
+    </div>`;
+    return;
+  }
+
+  const panes = [sa, sb].filter(Boolean);
+  wrapper.innerHTML = '';
+  panes.forEach(which => {
+    wrapper.appendChild(buildPane(which));
+  });
+}
+
+function buildPane(which) {
+  const colorMap = { main: 'var(--accent3)', exclude: 'var(--accent2)', result: 'var(--accent)' };
+  const labelMap = { main: 'Main List', exclude: 'Exclude List', result: 'Result' };
+  const data = which === 'result' ? state.result : (state[which] ? state[which].emails : []);
+  const color = colorMap[which];
+
+  const pane = document.createElement('div');
+  pane.className = 'compare-pane';
+  pane.style.setProperty('--pane-color', color);
+
+  const count = data ? data.length : 0;
+
+  pane.innerHTML = `
+    <div class="pane-header" style="border-top: 2px solid ${color};">
+      <div class="pane-title">
+        <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0"></span>
+        ${labelMap[which]}
+      </div>
+      <span class="pane-count">${count} emails</span>
+    </div>
+    <div class="search-bar">
+      <input class="search-input" id="search-${which}" placeholder="Search emails…" oninput="filterPane('${which}',this.value)">
+    </div>
+    <div class="email-list" id="list-${which}"></div>
+  `;
+
+  // Render list after DOM insert
+  setTimeout(() => renderEmailList(which, data, ''), 0);
+  return pane;
+}
+
+function renderEmailList(which, data, query) {
+  const list = document.getElementById('list-' + which);
+  if (!list || !data) return;
+  const filtered = query ? data.filter(e => e.includes(query.toLowerCase())) : data;
+  if (filtered.length === 0) {
+    list.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:0.8rem;font-family:'DM Mono',monospace;">${query ? 'No matches' : 'Empty list'}</div>`;
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  const excSet = state.exclude ? new Set(state.exclude.emails) : new Set();
+  const resultSet = state.result ? new Set(state.result) : new Set();
+
+  filtered.forEach((email, i) => {
+    const row = document.createElement('div');
+    row.className = 'email-row';
+    if (which === 'main' && excSet.has(email)) row.classList.add('excluded');
+    if (which === 'result') row.classList.add('result-row');
+
+    const highlight = query ? email.replace(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'), '<mark style="background:rgba(0,229,160,0.25);color:inherit;border-radius:2px">$1</mark>') : email;
+    row.innerHTML = `<span class="email-row-num">${i + 1}</span>${highlight}`;
+    fragment.appendChild(row);
+  });
+
+  list.innerHTML = '';
+  list.appendChild(fragment);
+}
+
+function filterPane(which, query) {
+  const data = which === 'result' ? state.result : (state[which] ? state[which].emails : []);
+  renderEmailList(which, data, query);
+}
+
+// ══════════════════════════════════════════
+// DOWNLOAD
+// ══════════════════════════════════════════
+function download(fmt) {
+  if (!state.result || !state.result.length) return;
+  if (fmt === 'csv') downloadCSV();
+  else if (fmt === 'xlsx') downloadXLSX();
+  else if (fmt === 'txt') downloadTXT();
+  else if (fmt === 'docx') downloadDocx();
+}
+
+async function downloadDocx() {
+  // Build a valid .docx from scratch using JSZip
+  const emails = state.result;
+  const zip = new JSZip();
+
+  // [Content_Types].xml
+  zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`);
+
+  // _rels/.rels
+  zip.folder('_rels').file('.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`);
+
+  // word/_rels/document.xml.rels
+  zip.folder('word').folder('_rels').file('document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>`);
+
+  // All emails in a single paragraph, separated by semicolons
+  const paragraphs = `<w:p><w:r><w:t xml:space="preserve">${emails.join('; ')}</w:t></w:r></w:p>`;
+
+  zip.file('word/document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    ${paragraphs}
+  </w:body>
+</w:document>`);
+
+  const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  triggerDownload(blob, 'filtered_emails.docx');
+}
+
+function downloadCSV() {
+  const content = 'email\n' + state.result.join('\n');
+  triggerDownload(new Blob([content], { type: 'text/csv' }), 'filtered_emails.csv');
+}
+
+function downloadTXT() {
+  const content = state.result.join(';');
+  triggerDownload(new Blob([content], { type: 'text/plain' }), 'filtered_emails.txt');
+}
+
+function downloadXLSX() {
+  const ws = XLSX.utils.aoa_to_sheet([['email'], ...state.result.map(e => [e])]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Filtered Emails');
+  XLSX.writeFile(wb, 'filtered_emails.xlsx');
+  toast('Downloaded filtered_emails.xlsx', 'success');
+}
+
+function triggerDownload(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('Downloaded ' + name, 'success');
+}
+
+// ══════════════════════════════════════════
+// TOAST
+// ══════════════════════════════════════════
+let toastTimer;
+function toast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'show ' + type;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.className = '', 3000);
+}
+</script>
+</body>
+</html>
