@@ -371,7 +371,63 @@
   .search-input:focus { border-color: var(--accent); }
   .search-input::placeholder { color: var(--text3); }
 
-  /* ── SCROLLBAR ── */
+  /* ── CLICKABLE STAT CARD ── */
+  .stat-card-clickable {
+    cursor: pointer;
+    transition: all 0.18s;
+  }
+  .stat-card-clickable:hover {
+    border-color: rgba(255,107,107,0.5);
+    background: rgba(255,107,107,0.08);
+    transform: translateY(-1px);
+  }
+
+  /* ── MODAL ── */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .modal-backdrop.open { opacity: 1; pointer-events: all; }
+  .modal-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: 2px solid var(--accent2);
+    border-radius: 12px;
+    width: 480px;
+    max-width: 95vw;
+    max-height: 75vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+    transform: translateY(12px);
+    transition: transform 0.2s;
+    overflow: hidden;
+  }
+  .modal-backdrop.open .modal-box { transform: translateY(0); }
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .modal-title {
+    font-size: 0.88rem; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .modal-close {
+    background: none; border: none; color: var(--text3); cursor: pointer;
+    font-size: 1rem; padding: 4px 6px; border-radius: 5px;
+    transition: all 0.15s; line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); background: var(--surface3); }
+  .modal-search { padding: 12px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .modal-search .search-input { background-position: 12px center; }
+
+
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 3px; }
@@ -474,13 +530,13 @@
           <div class="stat-value blue" id="stat-main">—</div>
           <div class="stat-label">Main list</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card " id="card-excluded" >
           <div class="stat-value red" id="stat-exclude">—</div>
-          <div class="stat-label">Excluded</div>
+          <div class="stat-label">Eamils to Remove </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card stat-card-clickable" onclick="openExcludedModal()" title="Click to view excluded emails" >
           <div class="stat-value" id="stat-dups">—</div>
-          <div class="stat-label">Duplicates removed</div>
+          <div class="stat-label">Emails removed <span id="excluded-hint" style="display:none">👁</span></div>
         </div>
         <div class="stat-card accent">
           <div class="stat-value green" id="stat-result">—</div>
@@ -547,6 +603,24 @@
       </div>
 
     </div>
+  </div>
+</div>
+
+<!-- Excluded Emails Modal -->
+<div id="excluded-modal" class="modal-backdrop" onclick="closeExcludedModal(event)">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title">
+        <span style="width:9px;height:9px;border-radius:50%;background:var(--accent2);display:inline-block;flex-shrink:0"></span>
+        Excluded Emails
+        <span class="tab-count" id="modal-count"></span>
+      </div>
+      <button class="modal-close" onclick="closeExcludedModal()">✕</button>
+    </div>
+    <div class="modal-search">
+      <input class="search-input" id="modal-search-input" placeholder="Search excluded emails…" oninput="filterModal(this.value)">
+    </div>
+    <div class="email-list" id="modal-email-list"></div>
   </div>
 </div>
 
@@ -709,6 +783,7 @@ function runFilter() {
   document.getElementById('stat-result').textContent = result.length;
 
   updateTabState('result', result.length);
+  document.getElementById('excluded-hint').style.display = 'inline';
   ['dl-csv','dl-xlsx','dl-txt','dl-docx'].forEach(id => document.getElementById(id).disabled = false);
 
   // Auto-show result
@@ -953,8 +1028,55 @@ function triggerDownload(blob, name) {
 }
 
 // ══════════════════════════════════════════
-// TOAST
+// EXCLUDED MODAL
 // ══════════════════════════════════════════
+function openExcludedModal() {
+  if (!state.result) return;
+  const excSet = new Set(state.exclude ? state.exclude.emails : []);
+  const mainSet = new Set(state.main ? state.main.emails : []);
+  // emails that were in main AND in exclude
+  state.excludedList = [...mainSet].filter(e => excSet.has(e));
+  if (!state.excludedList.length) { toast('No emails were excluded', ''); return; }
+
+  document.getElementById('modal-count').textContent = state.excludedList.length;
+  document.getElementById('modal-search-input').value = '';
+  renderModalList('');
+  document.getElementById('excluded-modal').classList.add('open');
+}
+
+function closeExcludedModal(e) {
+  if (e && e.target !== document.getElementById('excluded-modal')) return;
+  document.getElementById('excluded-modal').classList.remove('open');
+}
+
+function filterModal(query) {
+  renderModalList(query.toLowerCase());
+}
+
+function renderModalList(query) {
+  const list = document.getElementById('modal-email-list');
+  const data = state.excludedList || [];
+  const filtered = query ? data.filter(e => e.includes(query)) : data;
+
+  if (!filtered.length) {
+    list.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text3);font-size:0.8rem;font-family:'DM Mono',monospace;">${query ? 'No matches' : 'None'}</div>`;
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  filtered.forEach((email, i) => {
+    const row = document.createElement('div');
+    row.className = 'email-row';
+    row.style.color = 'var(--accent2)';
+    const hl = query ? email.replace(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'), '<mark style="background:rgba(255,107,107,0.25);color:inherit;border-radius:2px">$1</mark>') : email;
+    row.innerHTML = `<span class="email-row-num">${i + 1}</span>${hl}`;
+    fragment.appendChild(row);
+  });
+  list.innerHTML = '';
+  list.appendChild(fragment);
+}
+
+
 let toastTimer;
 function toast(msg, type = '') {
   const el = document.getElementById('toast');
